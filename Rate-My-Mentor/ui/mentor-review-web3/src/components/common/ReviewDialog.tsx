@@ -14,6 +14,7 @@ interface ReviewDialogProps {
   onOpenChange: (open: boolean) => void;
   mentorId: string;
   mentorName: string;
+  error?: string | null;
   onSubmit?: (review: {
     rating: number;
     comment: string;
@@ -33,6 +34,7 @@ export function ReviewDialog({
   onOpenChange,
   mentorId,
   mentorName,
+  error: externalError,
   onSubmit,
 }: ReviewDialogProps) {
   const [rating, setRating] = useState(5);
@@ -42,6 +44,13 @@ export function ReviewDialog({
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // 当弹窗打开时，如果有外部错误，显示它
+  useEffect(() => {
+    if (open && externalError) {
+      setError(externalError);
+    }
+  }, [open, externalError]);
 
   // 当弹窗关闭时，重置所有状态
   useEffect(() => {
@@ -136,16 +145,21 @@ export function ReviewDialog({
     }
 
     setIsSubmitting(true);
+    setError(null);
     try {
+      // 调用 onSubmit，由父组件决定是否成功
+      // 如果失败，父组件会设置 externalError
+      // 如果成功，父组件会关闭弹窗
       await onSubmit?.({
         rating,
         comment,
         tags: analysis?.tags || [],
         scores: analysis?.scores,
       });
-      // 关闭弹窗会自动重置所有状态
+      // 如果没有抛出错误，说明成功，关闭弹窗
       onOpenChange(false);
     } catch (err) {
+      // onSubmit 抛出错误时显示
       setError(err instanceof Error ? err.message : "提交失败");
     } finally {
       setIsSubmitting(false);

@@ -4,6 +4,8 @@ import { useState } from "react";
 import { CheckCircle2, ExternalLink, Globe, Shield, Star, X } from "lucide-react";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
+import { useAccount, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
+import { parseEther } from "viem";
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -14,6 +16,7 @@ import { RingChart, ScoreBar } from "@/components/common/ring-chart";
 import { MOCK_MENTOR_DETAIL, getMentorReviews } from "@/data/detail-mock";
 import type { ReviewItem } from "@/data/detail-mock";
 import { cn } from "@/lib/utils";
+import { REVIEW_CONTRACT_ADDRESS, reviewContractAbi } from "@/lib/contract";
 
 type PageProps = {
   params: { id: string };
@@ -56,6 +59,34 @@ export default function MentorDetailPage({ params }: PageProps) {
   const [filter, setFilter] = useState<"all" | "verified">("all");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [reviews, setReviews] = useState<ReviewItem[]>(allReviews);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  // Web3 hooks
+  const { address, isConnected } = useAccount();
+  const { data: hash, writeContractAsync, isPending: isWriting } = useWriteContract();
+  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({
+    hash
+  });
+
+  // 将 AI 分析的分数映射到合约要求的 5 个维度
+  const mapScoresToDimScores = (scores?: Record<string, number>): [bigint, bigint, bigint, bigint, bigint] => {
+    const defaultScore = scores?.overall ?? 3;
+    return [
+      BigInt(Math.round((scores?.communication ?? defaultScore) * 5)), // 成长支持
+      BigInt(Math.round((scores?.technical ?? defaultScore) * 5)),    // 预期清晰度
+      BigInt(Math.round((scores?.communication ?? defaultScore) * 5)), // 沟通质量
+      BigInt(Math.round((scores?.technical ?? defaultScore) * 5)),    // 工作强度
+      BigInt(Math.round((scores?.communication ?? defaultScore) * 5)), // 尊重与包容
+    ];
+  };
+
+  // 将字符串转换为 bytes32
+  const stringToBytes32 = (str: string): `0x${string}` => {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(str);
+    const hashHex = Array.from(data).map(b => b.toString(16).padStart(2, '0')).join('');
+    return `0x${hashHex.padEnd(64, '0').slice(0, 64)}`;
+  };
 
   const handleSubmitReview = async (review: {
     rating: number;
@@ -63,18 +94,75 @@ export default function MentorDetailPage({ params }: PageProps) {
     tags: string[];
     scores?: Record<string, number>;
   }) => {
+    setSubmitError(null);
+
+    // 如果钱包未连接，提示错误
+    if (!isConnected || !address) {
+      setSubmitError("请先连接钱包后再提交评价");
+      return;
+    }
+
+    let txHash: string | undefined;
+
+    // 如果钱包已连接，尝试上链
+    try {
+      // TODO: 替换为真实的 credentialId（需要从 SBT 获取）
+      const credentialId = 1; // 临时使用 tokenId=1 测试
+      const targetId = stringToBytes32(id);
+      const dimScores = mapScoresToDimScores(review.scores);
+
+      // 生成简单的 CID（实际应该上传到 IPFS）
+      const cid = stringToBytes32(`review-${Date.now()}`);
+
+      const writeHash = await writeContractAsync({
+        address: REVIEW_CONTRACT_ADDRESS,
+        abi: reviewContractAbi,
+        functionName: 'submitReview',
+        args: [
+          BigInt(credentialId),    // _credentialId
+          targetId,                // _targetId
+          "mentor",                // _targetType
+          BigInt(review.rating),   // _overallScore
+          dimScores as unknown as any, // _dimScores
+          cid,                     // _cid
+        ],
+      } as any);
+
+      // 等待交易确认（这里需要用户确认钱包中的交易）
+      // 如果用户拒绝或交易失败，writeContractAsync 会抛出错误
+      txHash = writeHash;
+
+    } catch (error: any) {
+      console.error("上链失败:", error);
+      // 提取错误信息
+      const errorMessage = error?.message || "上链失败";
+      let errorText = "上链失败";
+      if (errorMessage.includes("user rejected")) {
+        errorText = "您已取消交易";
+      } else if (errorMessage.includes("credential")) {
+        errorText = "您的 SBT 凭证无效，请检查是否持有有效的凭证";
+      } else if (errorMessage.includes("Already reviewed")) {
+        errorText = "您已经评价过此 Mentor";
+      } else {
+        errorText = `上链失败: ${errorMessage}`;
+      }
+      setSubmitError(errorText);
+      throw new Error(errorText); // 抛出错误，让 ReviewDialog 知道失败
+    }
+
+    // 只有上链成功才创建评论
     const newReview: ReviewItem = {
       id: `review-${Date.now()}`,
-      author: "You",
-      authorAddress: "0x0000...0001",
+      author: `0x${address.slice(2, 8)}`,
+      authorAddress: address,
       rating: review.rating,
       date: new Date().toLocaleDateString("zh-CN"),
       comment: review.comment,
       tags: review.tags,
+      txHash: txHash,
     };
 
     setReviews([newReview, ...reviews]);
-    // TODO: 调用合约上链
   };
 
   if (!mentor) {
@@ -364,6 +452,7 @@ export default function MentorDetailPage({ params }: PageProps) {
           onOpenChange={setDialogOpen}
           mentorId={mentor.id}
           mentorName={mentor.name}
+          error={submitError}
           onSubmit={handleSubmitReview}
         />
       )}
