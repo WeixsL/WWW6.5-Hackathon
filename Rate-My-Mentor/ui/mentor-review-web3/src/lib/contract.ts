@@ -10,6 +10,9 @@ export const internSbtAddress =
 export const reviewContractAddress =
   "0x957ba3AEcCC6cd437e4206591BAe4624FC5a7a03" as const;
 
+// 大写别名，保持向后兼容
+export const REVIEW_CONTRACT_ADDRESS = reviewContractAddress;
+
 /**
  * InternSBT 最小 ABI
  * 当前前端主链路会用到：
