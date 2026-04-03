@@ -3,15 +3,20 @@ import { z } from "zod";
 import {
   getAllCards,
   getAllCardOres,
+  getAllOres,
   getOresByIds,
   insertCard,
   insertCardOres,
   uploadCardImageToSupabase,
   formatCard,
   calcRarity,
+  getCardIdsByOreTypes,
+  listCardImagesFromStorage,
+  getCardsByIds,
 } from "../models/supabase.js";
 import { generateCardIllustration } from "../services/image.service.js";
 import { generateCardMeta } from "../services/ai.service.js";
+import { isDemoMode } from "../lib/demoMode.js";
 import { fail, serverError } from "../utils/response.js";
 
 const router: IRouter = Router();
@@ -19,14 +24,14 @@ const router: IRouter = Router();
 const smeltSchema = z.object({
   name: z.string().optional(),
   description: z.string().default(""),
-  oreIds: z.array(z.number().int().positive()).min(1, "至少需要一个矿石"),
+  oreIds: z.array(z.number().int().positive()).default([]),
   mode: z.enum(["A", "B", "C"]).default("A"),
 });
 
 router.get("/cards", async (req, res) => {
   try {
-    const [cards, cardOres] = await Promise.all([getAllCards(), getAllCardOres()]);
-    res.json({ data: cards.map((card) => formatCard(card, cardOres)) });
+    const [cards, cardOres, ores] = await Promise.all([getAllCards(), getAllCardOres(), getAllOres()]);
+    res.json({ data: cards.map((card) => formatCard(card, cardOres, ores)) });
   } catch (err) {
     req.log.error({ err }, "Failed to get cards");
     serverError(res);
@@ -44,19 +49,52 @@ router.post("/smelt", async (req, res) => {
   const needsImage = mode === "B" || mode === "C";
 
   try {
-    const ores = await getOresByIds(oreIds);
-    if (ores.length === 0) {
+    // 有传 oreIds 时才查库；若全部为离线本地 ID（已被前端过滤成空数组），允许继续
+    const ores = oreIds.length > 0 ? await getOresByIds(oreIds) : [];
+    if (oreIds.length > 0 && ores.length === 0) {
       fail(res, "找不到有效的矿石，请检查矿石 ID");
       return;
     }
 
     const rarity = calcRarity(ores.length);
 
+    // ── Demo 模式：跳过 AI 生图，匹配现有图片直接返回 ─────────────────────
+    if (needsImage && isDemoMode()) {
+      req.log.info({ oreIds }, "[Demo] Skipping AI, matching existing card image");
+      const types = [...new Set(ores.map((o) => o.type).filter(Boolean))];
+      const [allImages, typeCardIds] = await Promise.all([
+        listCardImagesFromStorage(),
+        getCardIdsByOreTypes(types),
+      ]);
+      const typeCardIdSet = new Set(typeCardIds);
+      const exact = allImages.filter((img) => typeCardIdSet.has(img.cardId));
+      const pool = exact.length > 0 ? exact : allImages;
+      const picked = pool[Math.floor(Math.random() * pool.length)];
+      const previewUrl = picked?.publicUrl ?? null;
+      const previewName = previewUrl
+        ? (await getCardsByIds([picked.cardId]))[0]?.name ?? "预览卡片"
+        : "预览卡片";
+
+      res.status(200).json({
+        cardId: picked?.cardId ?? null,
+        name: previewName,
+        description,
+        rarity,
+        oreIds,
+        milestoneTitle: previewName,
+        illustrationDescription: null,
+        supabaseImageUrl: previewUrl,
+        isDemo: true,
+      });
+      return;
+    }
+
     // ── Step 1: GPT 提取动词/名词 → 生成里程碑标题 + 插图描述 ──────────────
     let milestoneTitle = parsed.data.name?.trim() || "";
     let illustrationDescription = "";
 
-    if (needsImage) {
+    // 有矿石内容时才调用 GPT 提取；离线卡片（ores 为空）直接用传入的 name
+    if (needsImage && ores.length > 0) {
       try {
         const oreContents = ores.map((o) =>
           [o.title, o.content].filter(Boolean).join("："),
@@ -79,9 +117,10 @@ router.post("/smelt", async (req, res) => {
 
     if (needsImage) {
       try {
-        const fallbackDescription = ores
-          .map((o) => o.title)
-          .join(", ");
+        // 离线卡片无矿石标题时，用卡片名称作为插图描述兜底
+        const fallbackDescription = ores.length > 0
+          ? ores.map((o) => o.title).join(", ")
+          : name;
 
         const illustrationBuffer = await generateCardIllustration({
           illustrationDescription: illustrationDescription || fallbackDescription,

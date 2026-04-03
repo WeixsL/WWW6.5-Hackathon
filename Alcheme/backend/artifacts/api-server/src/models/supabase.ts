@@ -249,13 +249,23 @@ export function formatOre(ore: Ore) {
   };
 }
 
-export function formatCard(card: Card, cardOres: CardOre[]) {
+export function formatCard(card: Card, cardOres: CardOre[], ores: Ore[] = []) {
+  const cardOreIds = cardOres.filter((co) => co.card_id === card.id).map((co) => co.ore_id);
+  const cardOreDetails = ores.filter((o) => cardOreIds.includes(o.id));
   return {
     id: card.id,
     name: card.name,
+    text: card.name,
     description: card.description,
     rarity: card.rarity,
-    oreIds: cardOres.filter((co) => co.card_id === card.id).map((co) => co.ore_id),
+    oreIds: cardOreIds,
+    ores: cardOreDetails.map((o) => ({
+      date: o.created_at ?? "",
+      content: o.content,
+    })),
+    cardBgIndex: card.id % 3,
+    stampIndex: (card.id * 7) % 3,
+    date: card.created_at,
     createdAt: card.created_at,
   };
 }
