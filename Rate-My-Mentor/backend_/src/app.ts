@@ -71,14 +71,3 @@ app.listen(PORT, () => {
   //console.log(`🚀 后端服务已启动，运行在端口 ${PORT}`);
   //console.log(`📊 健康检查地址：/health`);
 //});
-=======
-app.listen(PORT, () => {
-  console.log(`🚀 服务启动成功 端口：${PORT}`);
-});
-
-// 启动服务
-app.listen(PORT, () => {
-  console.log(`🚀 后端服务已启动，运行在 http://localhost:${PORT}`);
-  console.log(`📊 健康检查地址：http://localhost:${PORT}/health`);
-});
->>>>>>> f19f9ceca19d00f7245acc4dc167cd9eb1cb7f32
