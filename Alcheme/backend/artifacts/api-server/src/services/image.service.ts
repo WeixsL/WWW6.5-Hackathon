@@ -1,52 +1,6 @@
 import sharp from "sharp";
 import { generateImageBuffer } from "@workspace/integrations-openai-ai-server/image";
 
-// ─── DALL-E 3 AI 插画生成 ────────────────────────────────────────────────────
-
-export interface OreIllustrationOptions {
-  title: string;
-  content: string;
-  tags?: string[];
-  type?: string;
-}
-
-/**
- * 根据矿石关键词，调用 DALL-E (gpt-image-1) 生成风格化插画
- */
-export async function generateOreIllustration(
-  options: OreIllustrationOptions,
-): Promise<Buffer> {
-  const { title, content, tags = [], type = "text" } = options;
-
-  const keywords = [title, ...tags].filter(Boolean).join("、");
-  const prompt = buildIllustrationPrompt(keywords, content, type);
-
-  const buffer = await generateImageBuffer(prompt, "1024x1024");
-  return buffer;
-}
-
-function buildIllustrationPrompt(keywords: string, content: string, type: string): string {
-  const typeStyle: Record<string, string> = {
-    idea: "surreal conceptual art, glowing light bulb emerging from crystal ore, dreamlike",
-    note: "ancient parchment with glowing runes, mystical knowledge crystal, dark academia",
-    insight: "fractal neural network illuminated in gold, cosmic wisdom, futuristic",
-    link: "digital portal vortex, data streams forming crystals, cyberpunk neon",
-    image: "prismatic gem refracting vivid color spectrums, crystalline beauty",
-    text: "floating glowing text fragments crystallizing into a gem, magical realism",
-  };
-
-  const style = typeStyle[type] ?? typeStyle.text;
-
-  return [
-    `Create a stylized digital illustration for a personal growth NFT card.`,
-    `Core theme: "${keywords}".`,
-    `Visual concept: ${style}.`,
-    `The illustration should feel like a collectible card artwork — rich color, high detail, symbolic imagery that captures the essence of: "${content.slice(0, 100)}".`,
-    `Style: cinematic digital painting, dramatic lighting, no text or letters in the image.`,
-    `Aspect ratio: square 1:1.`,
-  ].join(" ");
-}
-
 // ─── Sharp SVG 勋章图片生成（用于 IPFS 封面合成）──────────────────────────────
 
 export interface BadgeImageOptions {
@@ -116,6 +70,192 @@ export async function generateBadgeImage(options: BadgeImageOptions): Promise<Bu
       </defs>
       <rect width="${size}" height="${size}" fill="url(#bg)" rx="40"/>
       <circle cx="${size / 2}" cy="${size / 2 - 80}" r="200" fill="${color}" opacity="0.08"/>
+    </svg>
+  `;
+
+  return sharp(Buffer.from(bgSvg))
+    .composite([{ input: Buffer.from(overlaySvg) }])
+    .png()
+    .toBuffer();
+}
+
+// ─── 卡片专属 DALL-E 生图（竖版，魔法水彩美学）─────────────────────────────
+
+export interface CardIllustrationOptions {
+  /** GPT 生成的个性化插图场景描述（英文） */
+  illustrationDescription: string;
+}
+
+/**
+ * 卡片专属提示词
+ * 风格固定（魔法水彩美学），场景由 GPT 个性化生成
+ */
+function buildCardIllustrationPrompt(illustrationDescription: string): string {
+  return [
+    `A full-bleed magical illustration with no borders, no frames, no decorative edges.`,
+    `Scene: ${illustrationDescription}`,
+    `Art style: soft 3D watercolor painting with luminous magical atmosphere,`,
+    `dreamy pastel tones blended with gentle glowing light effects.`,
+    `Color palette: lavender, rose gold, mint, and warm amber watercolor washes`,
+    `flowing freely across the canvas with no border or frame of any kind.`,
+    `Magical particles, soft light orbs, and watercolor ink blooms fill the scene.`,
+    `If any human figure appears, it must be a young woman with elegant, graceful features.`,
+    `No borders. No frames. No edges. No decorative outlines. Edge-to-edge illustration only.`,
+    `No text, no letters, no numbers anywhere in the image.`,
+    `Ultra high detail, painterly finish, portrait orientation.`,
+  ].join(" ");
+}
+
+/**
+ * 为卡片生成专属插画，使用竖版比例（1024x1536）适配手机屏幕 80% 宽
+ */
+export async function generateCardIllustration(
+  options: CardIllustrationOptions,
+): Promise<Buffer> {
+  const prompt = buildCardIllustrationPrompt(options.illustrationDescription);
+  const buffer = await generateImageBuffer(prompt, "1024x1536");
+  return buffer;
+}
+
+// ─── 勋章专属 DALL-E 生图（竖版，进阶感，魔法水彩美学）──────────────────────
+
+export interface BadgeIllustrationOptions {
+  /** GPT 生成的进化场景描述（英文） */
+  illustrationDescription: string;
+}
+
+/**
+ * 勋章专属提示词：风格与卡片一致，额外强调进阶/升华感
+ */
+function buildBadgeIllustrationPrompt(illustrationDescription: string): string {
+  return [
+    `A full-bleed magical evolution illustration with no borders, no frames, no decorative edges.`,
+    `Scene: ${illustrationDescription}`,
+    `Art style: soft 3D watercolor painting with luminous magical atmosphere,`,
+    `dreamy pastel tones blended with radiant ascension light effects.`,
+    `Color palette: deep violet, gold, celestial blue and warm amber watercolor washes`,
+    `flowing freely across the canvas — conveying a sense of power unlocked and new heights reached.`,
+    `Dramatic upward light rays, magical particles of achievement, shimmering aura of evolution.`,
+    `If any human figure appears, it must be a young woman with elegant, graceful features, glowing with power.`,
+    `No borders. No frames. No edges. No decorative outlines. Edge-to-edge illustration only.`,
+    `No text, no letters, no numbers anywhere in the image.`,
+    `Ultra high detail, painterly finish, portrait orientation, epic sense of progression.`,
+  ].join(" ");
+}
+
+/**
+ * 为勋章生成进化插画，竖版 1024×1536 适配手机屏幕 80% 宽
+ */
+export async function generateBadgeIllustration(
+  options: BadgeIllustrationOptions,
+): Promise<Buffer> {
+  const prompt = buildBadgeIllustrationPrompt(options.illustrationDescription);
+  const buffer = await generateImageBuffer(prompt, "1024x1536");
+  return buffer;
+}
+
+// ─── Sharp SVG 卡片合成（竖版，金色边框 + 黑曜石底色）────────────────────────
+
+export interface CardImageOptions {
+  name: string;
+  cardId: number;
+  rarity?: string;
+  oreCount?: number;
+  illustrationBuffer?: Buffer;
+}
+
+/**
+ * 合成卡片最终图（竖版 1024×1792，适配手机屏幕 80% 宽）
+ * 黑曜石底色 + 金色金属浮雕边框 + 卡片信息覆盖层
+ */
+export async function generateCardImage(options: CardImageOptions): Promise<Buffer> {
+  const { name, cardId, rarity = "common", oreCount = 1, illustrationBuffer } = options;
+
+  // 卡片统一使用金色边框（与黑曜石底色搭配）
+  const gold = "#C9A84C";
+  const goldLight = "#F0D080";
+
+  const w = 1024;
+  const h = 1536;
+  const br = 56; // border radius
+
+  const overlaySvg = `
+    <svg width="${w}" height="${h}" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <!-- 黑曜石蒙层渐变 -->
+        <linearGradient id="obsidian" x1="0%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%" style="stop-color:rgba(8,6,14,0.30)"/>
+          <stop offset="60%" style="stop-color:rgba(8,6,14,0.05)"/>
+          <stop offset="100%" style="stop-color:rgba(8,6,14,0.75)"/>
+        </linearGradient>
+        <!-- 金色边框渐变（模拟浮雕高光） -->
+        <linearGradient id="goldBorder" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" style="stop-color:${goldLight}"/>
+          <stop offset="40%" style="stop-color:${gold}"/>
+          <stop offset="100%" style="stop-color:#8B6914"/>
+        </linearGradient>
+      </defs>
+
+      <!-- 全图蒙层 -->
+      <rect width="${w}" height="${h}" fill="url(#obsidian)" rx="${br}"/>
+
+      <!-- 外层金色浮雕主边框 -->
+      <rect x="12" y="12" width="${w - 24}" height="${h - 24}"
+        fill="none" stroke="url(#goldBorder)" stroke-width="6" rx="${br - 4}" opacity="0.95"/>
+      <!-- 内层细边框（双线浮雕感） -->
+      <rect x="22" y="22" width="${w - 44}" height="${h - 44}"
+        fill="none" stroke="${gold}" stroke-width="1.5" rx="${br - 12}" opacity="0.55"/>
+
+      <!-- 顶部装饰线 -->
+      <line x1="80" y1="90" x2="${w - 80}" y2="90" stroke="${gold}" stroke-width="1" opacity="0.4"/>
+
+      <!-- 左上：稀有度胶囊 -->
+      <rect x="40" y="48" width="140" height="34" rx="17" fill="${gold}" opacity="0.88"/>
+      <text x="110" y="65" font-family="serif" font-size="15" fill="#1a0e00"
+        text-anchor="middle" dominant-baseline="middle" font-weight="bold" letter-spacing="2">${rarity.toUpperCase()}</text>
+
+      <!-- 右上：矿石数量 -->
+      <text x="${w - 44}" y="65" font-family="monospace" font-size="15" fill="${goldLight}"
+        text-anchor="end" dominant-baseline="middle" opacity="0.85">⬡ ${oreCount}</text>
+
+      <!-- 底部信息区背景 -->
+      <rect x="0" y="${h - 220}" width="${w}" height="220" fill="rgba(8,6,14,0.78)" rx="${br}"/>
+      <line x1="60" y1="${h - 218}" x2="${w - 60}" y2="${h - 218}" stroke="${gold}" stroke-width="1" opacity="0.35"/>
+
+      <!-- 卡片名 -->
+      <text x="${w / 2}" y="${h - 148}" font-family="serif" font-size="42" fill="#ffffff"
+        text-anchor="middle" dominant-baseline="middle" font-weight="bold">${escapeXml(name)}</text>
+
+      <!-- 分割线 -->
+      <line x1="${w / 2 - 120}" y1="${h - 108}" x2="${w / 2 + 120}" y2="${h - 108}"
+        stroke="${gold}" stroke-width="1" opacity="0.4"/>
+
+      <!-- Card ID -->
+      <text x="${w / 2}" y="${h - 68}" font-family="monospace" font-size="18" fill="${gold}"
+        text-anchor="middle" dominant-baseline="middle" opacity="0.75">CARD  #${String(cardId).padStart(4, "0")}</text>
+
+      <!-- 底部装饰点 -->
+      <circle cx="${w / 2}" cy="${h - 36}" r="4" fill="${gold}" opacity="0.5"/>
+      <circle cx="${w / 2 - 20}" cy="${h - 36}" r="2.5" fill="${gold}" opacity="0.3"/>
+      <circle cx="${w / 2 + 20}" cy="${h - 36}" r="2.5" fill="${gold}" opacity="0.3"/>
+    </svg>
+  `;
+
+  if (illustrationBuffer) {
+    const base = sharp(illustrationBuffer).resize(w, h, { fit: "cover", position: "centre" });
+    return base.composite([{ input: Buffer.from(overlaySvg) }]).png().toBuffer();
+  }
+
+  // 无插画时：纯黑曜石底色
+  const bgSvg = `
+    <svg width="${w}" height="${h}" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <radialGradient id="obsi" cx="50%" cy="40%" r="60%">
+          <stop offset="0%" style="stop-color:#1a1228"/>
+          <stop offset="100%" style="stop-color:#06040d"/>
+        </radialGradient>
+      </defs>
+      <rect width="${w}" height="${h}" fill="url(#obsi)" rx="${br}"/>
     </svg>
   `;
 

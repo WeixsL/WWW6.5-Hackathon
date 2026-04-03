@@ -11,10 +11,10 @@ import {
   insertBadgeCards,
   uploadBadgeImageToSupabase,
   calcRarity,
-  type CardOre,
   type Card,
 } from "../models/supabase.js";
-import { generateOreIllustration, generateBadgeImage } from "../services/image.service.js";
+import { generateBadgeIllustration } from "../services/image.service.js";
+import { generateBadgeEvolution } from "../services/ai.service.js";
 import { uploadBadgeToIpfs } from "../services/ipfs.service.js";
 import { mintSBT, isBlockchainConfigured } from "../services/blockchain.service.js";
 import { fail, serverError } from "../utils/response.js";
@@ -25,7 +25,9 @@ const forgeSchema = z.object({
   name: z.string().optional(),
   description: z.string().default(""),
   cardIds: z.array(z.number().int().positive()).min(1, "至少需要一张卡片"),
-  uploadToIpfs: z.boolean().default(false),
+  previousBadgeId: z.number().int().positive().optional(), // 旧勋章 ID，用于进化
+  mode: z.enum(["A", "B", "C"]).optional(),
+  uploadToIpfs: z.boolean().optional(),
   walletAddress: z.string().optional(),
 });
 
@@ -33,33 +35,6 @@ function generateTokenId(): string {
   return "SBT-" + randomBytes(8).toString("hex").toUpperCase();
 }
 
-async function collectOreKeywords(cardIds: number[]): Promise<{
-  title: string;
-  content: string;
-  tags: string[];
-  type: string;
-}> {
-  const cardOres = await getCardOresByCardIds(cardIds);
-  const oreIds = [...new Set(cardOres.map((co) => co.ore_id))];
-
-  if (oreIds.length === 0) {
-    return { title: "成长旅程", content: "Web3 学习与探索的记录", tags: [], type: "text" };
-  }
-
-  const ores = await getOresByIds(oreIds);
-  const titles = ores.map((o) => o.title).join("、");
-  const allTags = ores.flatMap((o) => o.tags ?? []);
-  const uniqueTags = [...new Set(allTags)].slice(0, 8);
-  const contentSample = ores.map((o) => o.content).join(" ").slice(0, 200);
-  const type = ores[0]?.type ?? "text";
-
-  return {
-    title: titles.slice(0, 60) || "成长结晶",
-    content: contentSample || "个人成长历程的珍贵记录",
-    tags: uniqueTags,
-    type,
-  };
-}
 
 function pickHighestRarity(cards: Card[]): string {
   const order = ["legendary", "epic", "rare", "common"];
@@ -78,7 +53,11 @@ router.post("/forge", async (req, res) => {
     return;
   }
 
-  const { description, cardIds, uploadToIpfs, walletAddress } = parsed.data;
+  const { cardIds, walletAddress, previousBadgeId } = parsed.data;
+
+  // mode 优先；若未传 mode 则兼容旧的 uploadToIpfs 布尔字段
+  const mode = parsed.data.mode ?? (parsed.data.uploadToIpfs ? "B" : "A");
+  const needsImage = mode === "B" || mode === "C";
 
   try {
     const cards = await getCardsByIds(cardIds);
@@ -89,30 +68,55 @@ router.post("/forge", async (req, res) => {
 
     const rarity = pickHighestRarity(cards);
     const tokenId = generateTokenId();
-    const name = parsed.data.name?.trim() || `${rarity} 勋章`;
+
+    // ── Step 1: 读取旧勋章 Metadata（可选）+ 收集新卡片内容 ─────────────────
+    let previousBadge: { name: string; description: string } | null = null;
+    if (previousBadgeId) {
+      try {
+        const prev = await getBadgeById(previousBadgeId);
+        if (prev) previousBadge = { name: prev.name, description: prev.description };
+      } catch {
+        req.log.warn({ previousBadgeId }, "Failed to fetch previous badge");
+      }
+    }
+
+    // ── Step 2: GPT 生成进化封号 + 插图描述 ─────────────────────────────────
+    let badgeName = parsed.data.name?.trim() || "";
+    let illustrationDescription = "";
+    let evolutionNarrative = parsed.data.description || "";
+
+    if (needsImage) {
+      try {
+        const cardOres = await getCardOresByCardIds(cardIds);
+        const oreIds = [...new Set(cardOres.map((co) => co.ore_id))];
+        const ores = oreIds.length > 0 ? await getOresByIds(oreIds) : [];
+        const newCardContents = ores.map((o) =>
+          [o.title, o.content].filter(Boolean).join("："),
+        );
+
+        const evolution = await generateBadgeEvolution(previousBadge, newCardContents);
+        if (!badgeName) badgeName = evolution.title;
+        illustrationDescription = evolution.illustrationDescription;
+        if (!evolutionNarrative) evolutionNarrative = evolution.evolutionNarrative;
+        req.log.info({ badgeName, illustrationDescription, evolutionNarrative }, "Badge evolution generated");
+      } catch (metaErr) {
+        req.log.warn({ err: metaErr }, "GPT badge evolution failed, using fallback");
+      }
+    }
+
+    const name = badgeName || `${rarity} 勋章`;
+    const description = evolutionNarrative;
 
     let supabaseImageUrl: string | null = null;
     let ipfsMetadataUrl: string | null = null;
     let onChainTokenId: string | null = null;
     let txHash: string | null = null;
 
-    if (uploadToIpfs) {
+    if (needsImage) {
       try {
-        const oreKeywords = await collectOreKeywords(cardIds);
-
-        const illustrationBuffer = await generateOreIllustration({
-          title: oreKeywords.title,
-          content: oreKeywords.content,
-          tags: oreKeywords.tags,
-          type: oreKeywords.type,
-        });
-
-        const imageBuffer = await generateBadgeImage({
-          name,
-          tokenId,
-          description,
-          rarity,
-          illustrationBuffer,
+        const fallbackScene = cards.map((c) => c.name).join(", ");
+        const imageBuffer = await generateBadgeIllustration({
+          illustrationDescription: illustrationDescription || fallbackScene,
         });
 
         const [supabaseResult, ipfsUploadResult] = await Promise.allSettled([
@@ -166,6 +170,8 @@ router.post("/forge", async (req, res) => {
       cardIds,
       rarity,
       walletAddress: walletAddress ?? null,
+      illustrationDescription: illustrationDescription || null,
+      previousBadgeId: previousBadgeId ?? null,
       supabaseImageUrl,
       ipfsMetadataUrl,
       onChainTokenId,

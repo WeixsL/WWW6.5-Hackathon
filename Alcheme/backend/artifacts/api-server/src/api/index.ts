@@ -6,7 +6,6 @@ import forgeRouter from "./forge.js";
 import statsRouter from "./stats.js";
 import refineRouter from "./refine.js";
 import summarizeRouter from "./summarize.js";
-import illustrateRouter from "./illustrate.js";
 import blockchainRouter from "./blockchain.js";
 
 const router: IRouter = Router();
@@ -18,7 +17,6 @@ router.use(forgeRouter);
 router.use(statsRouter);
 router.use(refineRouter);
 router.use(summarizeRouter);
-router.use(illustrateRouter);
 router.use(blockchainRouter);
 
 export default router;

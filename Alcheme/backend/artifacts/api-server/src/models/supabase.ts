@@ -165,10 +165,27 @@ export async function insertBadge(values: {
   on_chain_token_id?: string | null;
   tx_hash?: string | null;
   ipfs_metadata_url?: string | null;
+  supabase_image_url?: string | null;
+  ipfs_image_cid?: string | null;
+  rarity?: string | null;
 }): Promise<Badge> {
   const db = getDb();
+
+  // 先尝试完整插入（v3 迁移已执行时）
   const { data, error } = await db.from("badges").insert(values).select().single();
-  return assertNoError(data, error, "创建勋章失败");
+  if (!error) return data as Badge;
+
+  // 如果是 schema 缺字段错误，降级到基础字段插入（v3 迁移未执行时）
+  const isSchemaError =
+    (error as { message?: string }).message?.includes("column") &&
+    (error as { message?: string }).message?.includes("schema cache");
+  if (isSchemaError) {
+    const base = { name: values.name, description: values.description, token_id: values.token_id };
+    const { data: d2, error: e2 } = await db.from("badges").insert(base).select().single();
+    return assertNoError(d2, e2, "创建勋章失败");
+  }
+
+  throw new Error(`创建勋章失败: ${(error as { message: string }).message}`);
 }
 
 // ─── BadgeCards（勋章-卡片关联）──────────────────────────────────────────────
@@ -241,7 +258,7 @@ export function calcRarity(count: number): string {
 // ─── Storage：Supabase Storage 上传 ──────────────────────────────────────────
 
 const BUCKET_BADGE = "badge-images";
-const BUCKET_ORE = "ore-illustrations";
+const BUCKET_CARD = "card-images";
 
 export interface StorageUploadResult {
   path: string;
@@ -280,26 +297,27 @@ export async function uploadBadgeImageToSupabase(
   return { path, publicUrl: data.publicUrl };
 }
 
-/** 上传矿石插画到 Supabase Storage，返回 CDN 公开访问 URL */
-export async function uploadOreIllustrationToSupabase(
+/** 上传卡片图片到 Supabase Storage，返回 CDN 公开访问 URL */
+export async function uploadCardImageToSupabase(
   imageBuffer: Buffer,
-  oreId: string | number,
+  cardId: number,
 ): Promise<StorageUploadResult> {
   const supabase = getDb();
-  await ensureBucket(supabase, BUCKET_ORE);
+  await ensureBucket(supabase, BUCKET_CARD);
 
-  const filename = `ore-${oreId}-${Date.now()}.png`;
-  const path = `illustrations/${filename}`;
+  const filename = `card-${cardId}-${Date.now()}.png`;
+  const path = `cards/${filename}`;
 
   const { error } = await supabase.storage
-    .from(BUCKET_ORE)
+    .from(BUCKET_CARD)
     .upload(path, imageBuffer, { contentType: "image/png", upsert: true });
 
-  if (error) throw new Error(`Supabase 插画上传失败: ${error.message}`);
+  if (error) throw new Error(`Supabase 卡片图片上传失败: ${error.message}`);
 
-  const { data } = supabase.storage.from(BUCKET_ORE).getPublicUrl(path);
+  const { data } = supabase.storage.from(BUCKET_CARD).getPublicUrl(path);
   return { path, publicUrl: data.publicUrl };
 }
+
 
 /** 测试 Supabase 连接是否正常 */
 export async function testSupabaseConnection(): Promise<boolean> {
