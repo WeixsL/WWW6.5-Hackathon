@@ -38,7 +38,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use(loggerMiddleware);
 
 // 挂载根路由
-app.use('/api/v1', rootRouter);
+app.use('/', rootRouter);
 
 // 全局错误处理
 app.use(errorMiddleware);
