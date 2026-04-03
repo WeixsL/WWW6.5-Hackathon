@@ -221,7 +221,7 @@ export default function ReviewPage() {
           targetType,
           overallScore,
           dimScores,
-          cidBytes32,
+          cidBytes32 as `0x${string}`,
         ],
       });
     } catch (err) {
@@ -292,7 +292,7 @@ export default function ReviewPage() {
     );
   }
 
-  if (phase === "input") {
+  if (phase === "input" || phase === "extracting") {
     return (
       <div className="mx-auto w-full max-w-2xl space-y-6 px-4 py-12">
         <div>
@@ -401,7 +401,7 @@ export default function ReviewPage() {
     );
   }
 
-  if (phase === "review_ai_result" && aiResult) {
+  if ((phase === "review_ai_result" || phase === "submitting") && aiResult) {
     return (
       <div className="mx-auto w-full max-w-2xl space-y-6 px-4 py-12">
         <div>

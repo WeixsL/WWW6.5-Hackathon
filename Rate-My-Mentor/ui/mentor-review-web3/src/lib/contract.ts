@@ -10,6 +10,8 @@ export const internSbtAddress =
 export const reviewContractAddress =
   "0x3845300491F10FC8C87694C5c8D7D62bFc12e1DC" as const;
 
+export const REVIEW_CONTRACT_ADDRESS = reviewContractAddress;
+
 /**
  * InternSBT 最小 ABI
  * 当前前端主链路会用到：
@@ -18,6 +20,13 @@ export const reviewContractAddress =
  * - isValidCredential：校验凭证是否有效
  */
 export const internSbtAbi = [
+  {
+    type: "function",
+    name: "balanceOf",
+    stateMutability: "view",
+    inputs: [{ name: "owner", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
   {
     type: "function",
     name: "mintSBT",
