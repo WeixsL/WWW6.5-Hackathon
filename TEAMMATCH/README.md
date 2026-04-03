@@ -1,4 +1,4 @@
-TeamMatch 是为组队而设计的智能合约系统，解决传统表格记录中团队成员技能不可见、个人间难以建立联系的问题。
+'''TeamMatch 是为组队而设计的智能合约系统，解决传统表格记录中团队成员技能不可见、个人间难以建立联系的问题。
 
 它允许个人加入多个项目和团队，显示团队成员技能，支持个人间匹配并在匹配成功后共享联系方式，同时保证隐私和权限管理。
 
@@ -46,3 +46,4 @@ TeamMatch
 │   ├─ createTeam(), getProjectTeams(), getTeamMembers()
 │   ├─ requestJoinTeam(), approveJoin(), getJoinRequests()
 │   ├─ requestMatch(), approveMatch(), getMatchRequests()
+'''
