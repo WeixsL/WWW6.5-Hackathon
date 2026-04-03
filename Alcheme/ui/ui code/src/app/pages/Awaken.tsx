@@ -13,12 +13,10 @@ import medalImage from 'figma:asset/99b83df7ca82c99f905eaf13a84586014ff41499.png
 import { Sparkles } from 'lucide-react';
 import { useState, useEffect } from 'react';
 
-// Import card backgrounds
 import cardBg1 from 'figma:asset/36f068e9e853e013a326ddfeb3134365b8967d6f.png';
 import cardBg2 from 'figma:asset/0beaaa20696396b0997d391dc1ed91d00f9eb7d8.png';
 import cardBg3 from 'figma:asset/b24f257b05ef0a618e241f85ac4368499ebda3c0.png';
 
-// Import stamp patterns
 import stamp1 from 'figma:asset/09ac11079bc3070142d0c981f2a1e6f042ae75a2.png';
 import stamp2 from 'figma:asset/d1ca70bd3631afc028f85c903ce19dacbbe493b9.png';
 import stamp3 from 'figma:asset/981b85fbc4b9bb9aba7723567677e46e9d1a3fb8.png';
@@ -41,38 +39,36 @@ export default function Awaken() {
   const [totalCards, setTotalCards] = useState(0);
   const [showAnimation, setShowAnimation] = useState(false);
   const [selectedCards, setSelectedCards] = useState<Card[]>([]);
-  const [animationPhase, setAnimationPhase] = useState(0); // 0: cards appear, 1: cards circle, 2: medal appears
+  const [animationPhase, setAnimationPhase] = useState(0);
   const [medalText, setMedalText] = useState('');
   const [showMedalInput, setShowMedalInput] = useState(false);
 
   const cardBackgrounds = [cardBg1, cardBg2, cardBg3];
   const stampPatterns = [stamp1, stamp2, stamp3];
 
+  // ==============================
+  // 🔌 接口：从后端获取卡片数量
+  // ==============================
   useEffect(() => {
-    // Load total cards count
-    const loadCardsCount = () => {
-      const cardsData = localStorage.getItem('refinedCards');
-      if (cardsData) {
-        const cards = JSON.parse(cardsData);
-        setTotalCards(cards.length);
-      } else {
-        setTotalCards(0);
+    const fetchCards = async () => {
+      try {
+        const res = await fetch("https://22bcdad4-a6ad-4285-adac-6e7d7e867c52-00-2rkqab45ars9.janeway.replit.dev/api/cards");
+        const data = await res.json();
+        setTotalCards(data.data?.length || 0);
+      } catch (e) {
+        const local = localStorage.getItem('refinedCards');
+        setTotalCards(local ? JSON.parse(local).length : 0);
       }
     };
 
-    loadCardsCount();
+    fetchCards();
 
-    // Listen for updates from refine page
-    const handleCardsUpdate = () => {
-      loadCardsCount();
-    };
-
+    const handleCardsUpdate = () => fetchCards();
     window.addEventListener('cardsUpdated', handleCardsUpdate);
     return () => window.removeEventListener('cardsUpdated', handleCardsUpdate);
   }, []);
 
   useEffect(() => {
-    // Check if we should show animation
     if (searchParams.get('showAnimation') === 'true') {
       const awakenCardsData = localStorage.getItem('awakenCards');
       if (awakenCardsData) {
@@ -80,7 +76,6 @@ export default function Awaken() {
         setSelectedCards(cards);
         setShowAnimation(true);
         
-        // Animation sequence
         setTimeout(() => setAnimationPhase(1), 500);
         setTimeout(() => setAnimationPhase(2), 3000);
         setTimeout(() => setShowMedalInput(true), 4500);
@@ -88,47 +83,50 @@ export default function Awaken() {
     }
   }, [searchParams]);
 
-  const handleConfirmMedal = () => {
-    // Get all refined cards
-    const cardsData = localStorage.getItem('refinedCards');
-    const allCards = cardsData ? JSON.parse(cardsData) : [];
-    
-    // Remove the selected cards from refined cards
-    const selectedCardIds = selectedCards.map(card => card.id);
-    const remainingCards = allCards.filter((card: Card) => !selectedCardIds.includes(card.id));
-    
-    // Save updated cards list
-    localStorage.setItem('refinedCards', JSON.stringify(remainingCards));
-    
-    // Update total cards count
-    setTotalCards(remainingCards.length);
-    
-    // Dispatch event to notify other components
-    window.dispatchEvent(new Event('cardsUpdated'));
-    
-    // Save medal to localStorage (use 'awakenedMedals' to match Profile page)
-    const medalsData = localStorage.getItem('awakenedMedals');
-    const medals = medalsData ? JSON.parse(medalsData) : [];
-    
-    const newMedal = {
-      id: `medal-${Date.now()}`,
-      text: medalText,
-      date: new Date().toISOString(),
-      cards: selectedCards
-    };
-    
-    medals.push(newMedal);
-    localStorage.setItem('awakenedMedals', JSON.stringify(medals));
-    
-    // Clear awaken cards and reset animation
+  // ==============================
+  // 🔌 接口：铸造勋章（对接后端）
+  // ==============================
+  const handleConfirmMedal = async () => {
+    try {
+      const cardIds = selectedCards.map(c => c.id);
+      await fetch("https://22bcdad4-a6ad-4285-adac-6e7d7e867c52-00-2rkqab45ars9.janeway.replit.dev/api/forge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: medalText,
+          cardIds: cardIds,
+          uploadToIpfs: true
+        })
+      });
+
+      // 本地同步清理
+      const allCards = JSON.parse(localStorage.getItem('refinedCards') || '[]');
+      const remaining = allCards.filter((c: Card) => !cardIds.includes(c.id));
+      localStorage.setItem('refinedCards', JSON.stringify(remaining));
+      setTotalCards(remaining.length);
+      window.dispatchEvent(new Event('cardsUpdated'));
+
+      // 保存勋章
+      const medals = JSON.parse(localStorage.getItem('awakenedMedals') || '[]');
+      medals.push({
+        id: `medal-${Date.now()}`,
+        text: medalText,
+        date: new Date().toISOString(),
+        cards: selectedCards
+      });
+      localStorage.setItem('awakenedMedals', JSON.stringify(medals));
+
+    } catch (e) {
+      console.log("铸造接口异常，使用本地模式");
+    }
+
+    // 重置动画
     localStorage.removeItem('awakenCards');
     setShowAnimation(false);
     setAnimationPhase(0);
     setMedalText('');
     setShowMedalInput(false);
     setSelectedCards([]);
-    
-    // Navigate back without animation
     navigate('/awaken');
   };
 
@@ -147,7 +145,6 @@ export default function Awaken() {
         fontFamily: "'Cormorant Garamond', serif"
       }}
     >
-      {/* Magical particles overlay */}
       <div className="absolute inset-0 pointer-events-none">
         {[...Array(30)].map((_, i) => {
           const duration = 2 + Math.random() * 3;
@@ -174,12 +171,9 @@ export default function Awaken() {
         })}
       </div>
 
-      {/* Main container */}
       <div className="relative w-full max-w-7xl bg-gradient-to-br from-purple-100/40 via-pink-50/30 to-cyan-100/40 rounded-3xl shadow-2xl border-4 border-amber-200/60 backdrop-blur-sm p-8">
         
-        {/* Top section - Title and Navigation */}
         <div className="flex items-start justify-between mb-6">
-          {/* Title and tagline - Using logo image like Home page */}
           <div>
             <img 
               src={alchemeLogo} 
@@ -188,7 +182,6 @@ export default function Awaken() {
             />
           </div>
 
-          {/* Navigation buttons */}
           <div className="flex gap-4">
             <button 
               onClick={() => navigate('/')}
@@ -217,10 +210,8 @@ export default function Awaken() {
           </div>
         </div>
 
-        {/* Main content area */}
         <div className="grid grid-cols-12 gap-8 mt-8">
           
-          {/* Left - Character */}
           <div className="col-span-4 flex items-center justify-center">
             <div className="relative">
               <img 
@@ -236,7 +227,6 @@ export default function Awaken() {
             </div>
           </div>
 
-          {/* Center - Magical Door */}
           <div className="col-span-4 flex flex-col items-center justify-center gap-6">
             <button 
               onClick={() => navigate('/card-gallery')}
@@ -256,10 +246,8 @@ export default function Awaken() {
                   animation: 'float 3s ease-in-out infinite'
                 }}
               />
-              {/* Glow effect */}
               <div className="absolute inset-0 bg-gradient-radial from-purple-300/30 via-transparent to-transparent blur-2xl" />
               
-              {/* Click hint */}
               <div className="absolute -bottom-4 left-1/2 -translate-x-1/2 whitespace-nowrap">
                 <span 
                   className="text-sm animate-pulse"
@@ -275,11 +263,8 @@ export default function Awaken() {
             </button>
           </div>
 
-          {/* Right - Owl and parchment with Total Cards */}
           <div className="col-span-4 flex flex-col items-center justify-start relative pt-4">
-            {/* Combined owl and parchment - owl sits on top of parchment */}
             <div className="relative w-full max-w-xs flex flex-col items-center">
-              {/* Steampunk Owl - positioned to overlap parchment */}
               <div className="relative z-10 mb-[-30px]">
                 <img 
                   src={owlImage} 
@@ -291,19 +276,15 @@ export default function Awaken() {
                 />
               </div>
 
-              {/* Parchment scroll with card info */}
               <div className="relative w-full">
-                {/* Parchment background image */}
                 <img 
                   src={parchmentScroll} 
                   alt="Parchment Scroll" 
                   className="w-full h-auto drop-shadow-xl"
                 />
                 
-                {/* Content overlay */}
                 <div className="absolute inset-0 flex items-center justify-center px-12 py-12">
                   <div className="flex flex-col items-center justify-center gap-4 w-full">
-                    {/* Total Cards heading */}
                     <div 
                       style={{
                         fontFamily: "'Cinzel', serif",
@@ -317,7 +298,6 @@ export default function Awaken() {
                       Total Cards
                     </div>
 
-                    {/* Card count */}
                     <div 
                       style={{
                         fontFamily: "'Cinzel', serif",
@@ -337,7 +317,6 @@ export default function Awaken() {
           </div>
         </div>
 
-        {/* Animation section */}
         {showAnimation && (
           <div className="fixed inset-0 z-50 flex items-center justify-center"
             style={{
@@ -345,7 +324,6 @@ export default function Awaken() {
               backdropFilter: 'blur(10px)'
             }}
           >
-            {/* Cards circling animation */}
             {(animationPhase === 0 || animationPhase === 1) && (
               <div className="relative w-96 h-96">
                 {selectedCards.map((card, idx) => {
@@ -402,7 +380,6 @@ export default function Awaken() {
                   );
                 })}
                 
-                {/* Center glow effect */}
                 <div 
                   className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2"
                   style={{
@@ -415,7 +392,6 @@ export default function Awaken() {
               </div>
             )}
 
-            {/* Medal appears */}
             {animationPhase >= 2 && (
               <div className="flex flex-col items-center gap-6 pointer-events-auto">
                 <div 
@@ -432,7 +408,6 @@ export default function Awaken() {
                     className="w-full h-full object-contain drop-shadow-2xl"
                   />
                   
-                  {/* Rays of light */}
                   {[...Array(12)].map((_, i) => (
                     <div
                       key={i}
@@ -449,7 +424,6 @@ export default function Awaken() {
                   ))}
                 </div>
 
-                {/* Input field */}
                 {showMedalInput && (
                   <div className="flex flex-col items-center gap-4">
                     <textarea
@@ -501,98 +475,42 @@ export default function Awaken() {
 
       <style>{`
         @keyframes rotate {
-          0% {
-            transform: rotate(0deg);
-          }
-          100% {
-            transform: rotate(360deg);
-          }
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
         }
-
         @keyframes sparkle {
-          0%, 100% {
-            opacity: 0.3;
-            transform: scale(0.8);
-          }
-          50% {
-            opacity: 1;
-            transform: scale(1.3);
-          }
+          0%, 100% { opacity: 0.3; transform: scale(0.8); }
+          50% { opacity: 1; transform: scale(1.3); }
         }
-
         @keyframes pulse {
-          0%, 100% {
-            opacity: 0.3;
-            transform: scale(0.8);
-          }
-          50% {
-            opacity: 1;
-            transform: scale(1.3);
-          }
+          0%, 100% { opacity: 0.3; transform: scale(0.8); }
+          50% { opacity: 1; transform: scale(1.3); }
         }
-
         @keyframes float {
-          0%, 100% {
-            transform: translateY(0);
-          }
-          50% {
-            transform: translateY(-10px);
-          }
+          0%, 100% { transform: translateY(0); }
+          50% { transform: translateY(-10px); }
         }
-
         @keyframes cardFlyIn {
-          0% {
-            opacity: 0;
-            transform: translate(-50%, -50%) scale(0.5);
-          }
-          100% {
-            opacity: 1;
-            transform: translate(-50%, -50%) scale(1);
-          }
+          0% { opacity: 0; transform: translate(-50%, -50%) scale(0.5); }
+          100% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
         }
-
         @keyframes cardRotate {
-          0% {
-            transform: translate(-50%, -50%) rotate(0deg) translateY(-200px);
-          }
-          100% {
-            transform: translate(-50%, -50%) rotate(360deg) translateY(-200px);
-          }
+          0% { transform: translate(-50%, -50%) rotate(0deg) translateY(-200px); }
+          100% { transform: translate(-50%, -50%) rotate(360deg) translateY(-200px); }
         }
-
         @keyframes medalAppear {
-          0% {
-            opacity: 0;
-            transform: scale(0.3) rotate(-180deg);
-          }
-          50% {
-            transform: scale(1.1) rotate(10deg);
-          }
-          100% {
-            opacity: 1;
-            transform: scale(1) rotate(0deg);
-          }
+          0% { opacity: 0; transform: scale(0.3) rotate(-180deg); }
+          50% { transform: scale(1.1) rotate(10deg); }
+          100% { opacity: 1; transform: scale(1) rotate(0deg); }
         }
-
         @keyframes rayRotate {
-          0% {
-            opacity: 0.3;
-          }
-          50% {
-            opacity: 0.8;
-          }
-          100% {
-            opacity: 0.3;
-          }
+          0% { opacity: 0.3; }
+          50% { opacity: 0.8; }
+          100% { opacity: 0.3; }
         }
-
         @keyframes owlFloat {
-          0%, 100% {
-            transform: translateY(0);
-          }
-          50% {
-            transform: translateY(-10px);
-          }
+          0%, 100% { transform: translateY(0); }
+          50% { transform: translateY(-10px); }
         }
       `}</style>
     </div>
