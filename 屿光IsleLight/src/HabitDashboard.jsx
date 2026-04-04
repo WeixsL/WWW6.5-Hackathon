@@ -49,10 +49,20 @@ const HabitDashboard = ({ onNavigateToExplore }) => {
   const [newHabit, setNewHabit] = useState({
     name: '', icon: '🌱', target: 0, color: ['#8B5CF6', '#A78BFA', '#C4B5FD'], isPrivate: true
   });
+  
+  // 打卡备注上链相关状态
+  const [showCheckInModal, setShowCheckInModal] = useState(false);
+  const [checkInThought, setCheckInThought] = useState('');
+  const [currentCheckInHabit, setCurrentCheckInHabit] = useState(null);
+  
+  // 单条记录上链相关状态
+  const [showRecordChainModal, setShowRecordChainModal] = useState(false);
+  const [recordChainThought, setRecordChainThought] = useState('');
+  const [currentRecordChain, setCurrentRecordChain] = useState(null);
 
   useEffect(() => {
     localStorage.setItem('IsleLightHabits_v2', JSON.stringify(habits));
-    document.title = "IsleLight - 你的习惯岛屿";
+    document.title = "IsleLight·屿光 - 你的习惯岛屿";
   }, [habits]);
 
   // 搜索过滤
@@ -172,7 +182,8 @@ const HabitDashboard = ({ onNavigateToExplore }) => {
   };
 
   // --- 打卡上链 ---
-  const checkInOnChain = async (habitId) => {
+  // --- 打卡上链（支持备注）---
+  const checkInOnChain = async (habitId, thought = '') => {
     if (!account) {
       alert("请先连接钱包");
       return false;
@@ -187,7 +198,7 @@ const HabitDashboard = ({ onNavigateToExplore }) => {
     try {
       const contract = await getContract();
       const contentHash = String(habitId);
-      const tx = await contract.checkIn(contentHash);
+      const tx = await contract.checkIn(contentHash, thought);
       await tx.wait();
       alert(`✅ 打卡已上链！\n交易哈希: ${tx.hash}`);
       return true;
@@ -198,6 +209,57 @@ const HabitDashboard = ({ onNavigateToExplore }) => {
     } finally { 
       setIsSyncing(false); 
     }
+  };
+  
+  // --- 打卡并上链（带备注弹窗）---
+  const handleCheckInWithThought = (habit) => {
+    setCurrentCheckInHabit(habit);
+    setCheckInThought('');
+    setShowCheckInModal(true);
+  };
+  
+  // --- 单条记录上链 ---
+  const handleRecordChain = async (habitId, record) => {
+    if (!account) {
+      alert("请先连接钱包");
+      return;
+    }
+    
+    if (!hasIdentity) {
+      setShowIdentityModal(true);
+      return;
+    }
+    
+    setCurrentRecordChain({ habitId, record });
+    setRecordChainThought(record.thought || '');
+    setShowRecordChainModal(true);
+  };
+  
+  // --- 确认单条记录上链 ---
+  const confirmRecordChain = async () => {
+    if (!currentRecordChain) return;
+    
+    const { habitId, record } = currentRecordChain;
+    const success = await checkInOnChain(habitId, recordChainThought);
+    
+    if (success) {
+      // 更新记录的上链状态
+      setHabits(prev => prev.map(h => {
+        if (h.id === habitId) {
+          return {
+            ...h,
+            records: h.records.map(r => 
+              r.id === record.id ? { ...r, isOnChain: true, thought: recordChainThought } : r
+            )
+          };
+        }
+        return h;
+      }));
+    }
+    
+    setShowRecordChainModal(false);
+    setCurrentRecordChain(null);
+    setRecordChainThought('');
   };
 
   // --- 基础逻辑函数 ---
@@ -434,7 +496,7 @@ const HabitDashboard = ({ onNavigateToExplore }) => {
                   </button>
                 )}
                 {habit.isPrivate === false && habit.isOnChain && (
-                  <button className="chain-sync-btn" onClick={() => checkInOnChain(habit.id)}>
+                  <button className="chain-sync-btn" onClick={() => handleCheckInWithThought(habit)}>
                     <Zap size={14} /> 打卡上链
                   </button>
                 )}
@@ -456,6 +518,16 @@ const HabitDashboard = ({ onNavigateToExplore }) => {
                     <div className="record-top">
                         <span className="record-time">{record.time}</span>
                         <div className="record-actions">
+                        {/* 单条记录上链按钮 - 仅公开习惯且未上链时显示 */}
+                        {habit.isPrivate === false && !record.isOnChain && (
+                          <button className="record-chain-btn" onClick={() => handleRecordChain(habit.id, record)} title="将此记录上链">
+                            <LinkIcon size={14} />
+                          </button>
+                        )}
+                        {/* 已上链标识 */}
+                        {record.isOnChain && (
+                          <span className="record-onchain-badge"><LinkIcon size={10} /> 已上链</span>
+                        )}
                         <button className="edit-thought-btn" onClick={() => { setEditingId(record.id); setTempThought(record.thought); }}>
                             <MessageSquare size={14} />
                         </button>
@@ -480,7 +552,7 @@ const HabitDashboard = ({ onNavigateToExplore }) => {
                     </div>
                 ))
                 ) : (
-                <div className="empty-logs">海面上风平浪静，还没有任何打卡记录。</div>
+                <div className="empty-logs">海面上风平浪静，还没有任何航海记录。</div>
                 )}
             </section>
           </div>
@@ -503,7 +575,7 @@ const HabitDashboard = ({ onNavigateToExplore }) => {
         <header className="app-header">
           <div className="brand-box">
             <h1>IsleLight·屿光</h1>
-            <p>在宇宙星尘中点亮你的习惯 🌌</p>
+            <p>在宇宙星尘中点亮你的岛屿 🌌</p>
           </div>
           <div className="header-right">
             {/* 钱包状态显示 */}
@@ -710,7 +782,7 @@ const HabitDashboard = ({ onNavigateToExplore }) => {
                 <p className="privacy-hint">
                   {newHabit.isPrivate 
                     ? '🔒 私密岛屿：仅你可见，数据存储在本地' 
-                    : '🌐 公开岛屿：打卡记录将上链，永久可验证'}
+                    : '🌐 公开岛屿：航海日志将上链，永久可验证'}
                 </p>
               </div>
               <button className="confirm-fancy" onClick={handleAddHabit}>开启岛屿新篇章</button>
@@ -721,6 +793,81 @@ const HabitDashboard = ({ onNavigateToExplore }) => {
       )}
 
       {selectedHabit && <DetailPage habit={habits.find(h => h.id === selectedHabit.id)} onBack={() => setSelectedHabit(null)} />}
+      
+      {/* 打卡备注上链弹窗 */}
+      {showCheckInModal && currentCheckInHabit && (
+        <div className="modal-overlay" onClick={() => setShowCheckInModal(false)}>
+          <div className="identity-modal" onClick={e => e.stopPropagation()}>
+            <div className="identity-modal-header">
+              <Zap size={40} className="identity-icon" />
+              <h2>记录今日能量</h2>
+              <p>为你的打卡添加备注，将永久上链存储</p>
+            </div>
+            <div className="identity-modal-body">
+              <label>打卡备注（选填）</label>
+              <textarea 
+                placeholder="分享你的感受或收获..."
+                value={checkInThought}
+                onChange={e => setCheckInThought(e.target.value)}
+                maxLength={200}
+                className="checkin-thought-textarea"
+              />
+              <p className="hint">最多200个字符，将与航海日志一起永久存储在区块链上</p>
+            </div>
+            <div className="identity-modal-footer">
+              <button className="cancel-btn" onClick={() => setShowCheckInModal(false)}>取消</button>
+              <button 
+                className="confirm-btn" 
+                onClick={async () => {
+                  const success = await checkInOnChain(currentCheckInHabit.id, checkInThought);
+                  if (success) {
+                    setShowCheckInModal(false);
+                    setCheckInThought('');
+                    setCurrentCheckInHabit(null);
+                  }
+                }}
+                disabled={isSyncing}
+              >
+                {isSyncing ? '正在上链...' : '确认上链'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* 单条记录上链弹窗 */}
+      {showRecordChainModal && currentRecordChain && (
+        <div className="modal-overlay" onClick={() => setShowRecordChainModal(false)}>
+          <div className="identity-modal" onClick={e => e.stopPropagation()}>
+            <div className="identity-modal-header">
+              <LinkIcon size={40} className="identity-icon" />
+              <h2>将记录上链</h2>
+              <p>此记录将被永久存储在区块链上</p>
+            </div>
+            <div className="identity-modal-body">
+              <label>记录备注</label>
+              <textarea 
+                placeholder="编辑或确认你的记录备注..."
+                value={recordChainThought}
+                onChange={e => setRecordChainThought(e.target.value)}
+                maxLength={200}
+                className="checkin-thought-textarea"
+              />
+              <p className="hint">上链后内容将无法修改，请确认无误</p>
+            </div>
+            <div className="identity-modal-footer">
+              <button className="cancel-btn" onClick={() => setShowRecordChainModal(false)}>取消</button>
+              <button 
+                className="confirm-btn" 
+                onClick={confirmRecordChain}
+                disabled={isSyncing}
+              >
+                {isSyncing ? '正在上链...' : '确认上链'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <style>{`
         /* 全局基础 */
@@ -850,6 +997,54 @@ const HabitDashboard = ({ onNavigateToExplore }) => {
         .privacy-badge.private { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.6); }
         
         .onchain-badge { font-size: 9px; padding: 2px 6px; border-radius: 8px; background: rgba(16,185,129,0.2); color: #34D399; display: inline-flex; align-items: center; gap: 3px; margin-left: 6px; }
+        
+        /* 打卡备注弹窗样式 */
+        .checkin-thought-textarea { 
+          width: 100%; 
+          padding: 14px 18px; 
+          border-radius: 15px; 
+          border: 1px solid rgba(99, 102, 241, 0.3); 
+          background: rgba(255,255,255,0.05); 
+          color: white; 
+          font-size: 15px; 
+          min-height: 100px; 
+          resize: none; 
+          outline: none; 
+          font-family: inherit;
+        }
+        .checkin-thought-textarea:focus { border-color: #6366f1; }
+        .checkin-thought-textarea::placeholder { color: rgba(255,255,255,0.3); }
+        
+        /* 单条记录上链按钮样式 */
+        .record-chain-btn { 
+          background: none; 
+          border: 1px solid rgba(99,102,241,0.3); 
+          color: #a5b4fc; 
+          cursor: pointer; 
+          padding: 4px 8px; 
+          border-radius: 8px; 
+          display: flex; 
+          align-items: center; 
+          gap: 4px; 
+          font-size: 11px;
+          transition: all 0.2s;
+        }
+        .record-chain-btn:hover { 
+          background: rgba(99,102,241,0.1); 
+          border-color: #6366f1; 
+        }
+        
+        /* 已上链标识样式 */
+        .record-onchain-badge { 
+          font-size: 9px; 
+          padding: 3px 8px; 
+          border-radius: 10px; 
+          background: rgba(16,185,129,0.15); 
+          color: #34D399; 
+          display: inline-flex; 
+          align-items: center; 
+          gap: 3px; 
+        }
 
         .confirm-fancy { margin-top: 20px; padding: 18px; border-radius: 18px; border: none; background: #1a1a3e; color: white; font-weight: 800; cursor: pointer; transition: 0.3s; }
         .confirm-fancy:hover { transform: translateY(-3px); box-shadow: 0 10px 20px rgba(0,0,0,0.2); }

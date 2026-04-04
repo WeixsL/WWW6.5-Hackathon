@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { ethers } from 'ethers';
-import { ArrowLeft, Globe, Zap, User, ExternalLink, RefreshCw, Search, X } from 'lucide-react';
+import { ArrowLeft, Globe, Zap, User, ExternalLink, RefreshCw, Search, X, MessageSquare, Hash, Clock } from 'lucide-react';
 import { useAccount } from 'wagmi';
-import { CONTRACT_ADDRESS, CONTRACT_ABI } from './config/contract';
+import { CONTRACT_ADDRESS, CONTRACT_ABI, SEARCH_INDEX_KEY, SEARCH_INDEX_TIMESTAMP_KEY } from './config/contract';
 
 // 图标列表（用于哈希映射）
 const ICON_LIST = ['🌱', '🌊', '🏔️', '🔥', '☁️', '🌙', '☀️', '❄️', '🌵', '🦋', '🏃', '📚', '💪', '🎯', '⭐', '🌟', '💫', '✨', '🎨', '🎵'];
@@ -25,74 +25,56 @@ const hashToIcon = (str) => {
   };
 };
 
+// 搜索索引数据结构
+const createSearchIndex = () => ({
+  users: {},        // { address: { nickname, joinTime, lighthouseCount } }
+  lighthouses: [],  // [{ contentHash, title, timestamp, author, icon, color }]
+  checkIns: [],     // [{ userAddress, nickname, cid, thought, timestamp, userIcon, userColor }]
+  lastUpdated: 0
+});
+
 const ExplorePage = ({ onBack }) => {
   const { isConnected } = useAccount();
   const [lighthouses, setLighthouses] = useState([]);
-  const [filteredLighthouses, setFilteredLighthouses] = useState([]);
+  const [filteredResults, setFilteredResults] = useState({
+    lighthouses: [],
+    checkIns: [],
+    users: []
+  });
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
+  const [indexingProgress, setIndexingProgress] = useState('');
   const [error, setError] = useState(null);
   const [selectedLighthouse, setSelectedLighthouse] = useState(null);
   const [checkIns, setCheckIns] = useState([]);
   const [loadingCheckIns, setLoadingCheckIns] = useState(false);
   const [userNickname, setUserNickname] = useState('');
-
-  // 获取所有公开的灯塔（习惯）
-  const fetchAllLighthouses = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      if (!window.ethereum) {
-        setError("请安装 MetaMask 钱包以查看公开岛屿");
-        setLoading(false);
-        return;
+  
+  // 搜索索引
+  const [searchIndex, setSearchIndex] = useState(() => {
+    const saved = localStorage.getItem(SEARCH_INDEX_KEY);
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        return createSearchIndex();
       }
-
-      const provider = new ethers.providers.Web3Provider(window.ethereum);
-      const contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, provider);
-      
-      const allLighthouses = await contract.getAllLighthouses();
-      
-      const formattedLighthouses = allLighthouses.map((l, index) => {
-        const { icon, color } = hashToIcon(l.title + l.author);
-        return {
-          id: index,
-          contentHash: l.contentHash,
-          title: l.title,
-          timestamp: new Date(l.timestamp.toNumber() * 1000).toLocaleString('zh-CN'),
-          timestampRaw: l.timestamp.toNumber(),
-          author: l.author,
-          authorShort: `${l.author.slice(0, 6)}...${l.author.slice(-4)}`,
-          icon,
-          color
-        };
-      });
-
-      setLighthouses(formattedLighthouses);
-      setFilteredLighthouses(formattedLighthouses);
-    } catch (err) {
-      console.error("获取公开岛屿失败:", err);
-      setError("获取公开岛屿失败: " + (err.reason || err.message));
-    } finally {
-      setLoading(false);
     }
-  };
+    return createSearchIndex();
+  });
 
   // 获取用户昵称
-  const fetchUserNickname = async (userAddress) => {
+  const fetchUserNickname = useCallback(async (provider, contract, userAddress) => {
     try {
-      if (!window.ethereum) return '';
-      const provider = new ethers.providers.Web3Provider(window.ethereum);
-      const contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, provider);
       const identity = await contract.getIdentity(userAddress);
       return identity[0] || '';
     } catch (err) {
       return '';
     }
-  };
+  }, []);
 
   // 获取某用户的打卡记录
-  const fetchUserCheckIns = async (userAddress) => {
+  const fetchUserCheckIns = useCallback(async (userAddress) => {
     setLoadingCheckIns(true);
     try {
       if (!window.ethereum) return [];
@@ -106,7 +88,8 @@ const ExplorePage = ({ onBack }) => {
         id: index,
         timestamp: new Date(c.timestamp.toNumber() * 1000).toLocaleString('zh-CN'),
         timestampRaw: c.timestamp.toNumber(),
-        cid: c.cid
+        cid: c.cid,
+        thought: c.thought || ''
       }));
 
       setCheckIns(formattedCheckIns);
@@ -116,34 +99,207 @@ const ExplorePage = ({ onBack }) => {
     } finally {
       setLoadingCheckIns(false);
     }
-  };
+  }, []);
 
-  // 搜索过滤
-  useEffect(() => {
-    if (!searchQuery.trim()) {
-      setFilteredLighthouses(lighthouses);
+  // 构建搜索索引
+  const buildSearchIndex = useCallback(async () => {
+    if (!window.ethereum) {
+      setError("请安装 MetaMask 钱包以查看公开岛屿");
+      setLoading(false);
       return;
     }
 
-    const query = searchQuery.toLowerCase().trim();
-    const filtered = lighthouses.filter(l => 
-      l.title.toLowerCase().includes(query) ||
-      l.author.toLowerCase().includes(query) ||
-      l.authorShort.toLowerCase().includes(query)
-    );
-    setFilteredLighthouses(filtered);
-  }, [searchQuery, lighthouses]);
+    setLoading(true);
+    setIndexingProgress('正在连接区块链...');
+    
+    try {
+      const provider = new ethers.providers.Web3Provider(window.ethereum);
+      const contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, provider);
+      
+      // 获取所有灯塔
+      setIndexingProgress('正在获取公开岛屿数据...');
+      const allLighthouses = await contract.getAllLighthouses();
+      
+      const newIndex = createSearchIndex();
+      const processedUsers = new Set();
+      
+      // 处理灯塔数据
+      for (let i = 0; i < allLighthouses.length; i++) {
+        const l = allLighthouses[i];
+        const { icon, color } = hashToIcon(l.title + l.author);
+        
+        newIndex.lighthouses.push({
+          id: i,
+          contentHash: l.contentHash,
+          title: l.title,
+          timestamp: new Date(l.timestamp.toNumber() * 1000).toLocaleString('zh-CN'),
+          timestampRaw: l.timestamp.toNumber(),
+          author: l.author,
+          authorShort: `${l.author.slice(0, 6)}...${l.author.slice(-4)}`,
+          icon,
+          color
+        });
 
+        // 收集需要获取昵称的用户地址
+        if (!processedUsers.has(l.author)) {
+          processedUsers.add(l.author);
+        }
+      }
+
+      // 获取所有用户的昵称和打卡记录
+      setIndexingProgress(`正在索引用户数据 (0/${processedUsers.size})...`);
+      let userIndex = 0;
+      
+      for (const userAddress of processedUsers) {
+        userIndex++;
+        setIndexingProgress(`正在索引用户数据 (${userIndex}/${processedUsers.size})...`);
+        
+        try {
+          // 获取用户身份
+          const identity = await contract.getIdentity(userAddress);
+          const nickname = identity[0] || '';
+          const joinTime = identity[1].toNumber();
+          const lighthouseCount = identity[2].toNumber();
+          
+          const { icon: userIcon, color: userColor } = hashToIcon(nickname || userAddress);
+          
+          newIndex.users[userAddress] = {
+            address: userAddress,
+            addressShort: `${userAddress.slice(0, 6)}...${userAddress.slice(-4)}`,
+            nickname,
+            joinTime: new Date(joinTime * 1000).toLocaleString('zh-CN'),
+            joinTimeRaw: joinTime,
+            lighthouseCount,
+            icon: userIcon,
+            color: userColor
+          };
+
+          // 获取用户打卡记录
+          if (nickname) { // 只获取有身份的用户的打卡记录
+            try {
+              const userCheckIns = await contract.getUserCheckIns(userAddress);
+              userCheckIns.forEach((c, idx) => {
+                if (c.thought && c.thought.trim()) { // 只索引有内容的打卡
+                  newIndex.checkIns.push({
+                    id: `${userAddress}-${idx}`,
+                    userAddress,
+                    nickname,
+                    cid: c.cid,
+                    thought: c.thought,
+                    timestamp: new Date(c.timestamp.toNumber() * 1000).toLocaleString('zh-CN'),
+                    timestampRaw: c.timestamp.toNumber(),
+                    userIcon,
+                    userColor
+                  });
+                }
+              });
+            } catch (e) {
+              console.warn(`获取用户 ${userAddress} 打卡记录失败:`, e);
+            }
+          }
+        } catch (e) {
+          console.warn(`处理用户 ${userAddress} 失败:`, e);
+        }
+      }
+
+      newIndex.lastUpdated = Date.now();
+      setSearchIndex(newIndex);
+      localStorage.setItem(SEARCH_INDEX_KEY, JSON.stringify(newIndex));
+      localStorage.setItem(SEARCH_INDEX_TIMESTAMP_KEY, String(Date.now()));
+      
+      setLighthouses(newIndex.lighthouses);
+      setIndexingProgress('');
+    } catch (err) {
+      console.error("构建搜索索引失败:", err);
+      setError("获取数据失败: " + (err.reason || err.message));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // 模糊搜索函数
+  const fuzzySearch = useCallback((query) => {
+    if (!query.trim()) {
+      return {
+        lighthouses: searchIndex.lighthouses,
+        checkIns: searchIndex.checkIns,
+        users: Object.values(searchIndex.users)
+      };
+    }
+
+    const searchTerm = query.toLowerCase().trim();
+    const results = {
+      lighthouses: [],
+      checkIns: [],
+      users: []
+    };
+
+    // 搜索灯塔（标题、作者地址）
+    results.lighthouses = searchIndex.lighthouses.filter(l => 
+      l.title.toLowerCase().includes(searchTerm) ||
+      l.author.toLowerCase().includes(searchTerm) ||
+      l.authorShort.toLowerCase().includes(searchTerm)
+    );
+
+    // 搜索打卡记录（备注内容、用户昵称）
+    results.checkIns = searchIndex.checkIns.filter(c => 
+      c.thought.toLowerCase().includes(searchTerm) ||
+      c.nickname.toLowerCase().includes(searchTerm) ||
+      c.cid.toLowerCase().includes(searchTerm)
+    );
+
+    // 搜索用户（昵称、地址）
+    results.users = Object.values(searchIndex.users).filter(u => 
+      u.nickname.toLowerCase().includes(searchTerm) ||
+      u.address.toLowerCase().includes(searchTerm) ||
+      u.addressShort.toLowerCase().includes(searchTerm)
+    );
+
+    return results;
+  }, [searchIndex]);
+
+  // 搜索过滤
   useEffect(() => {
-    fetchAllLighthouses();
+    const results = fuzzySearch(searchQuery);
+    setFilteredResults(results);
+  }, [searchQuery, searchIndex, fuzzySearch]);
+
+  // 初始化加载
+  useEffect(() => {
+    // 检查缓存是否需要更新（超过1小时）
+    const lastUpdate = parseInt(localStorage.getItem(SEARCH_INDEX_TIMESTAMP_KEY) || '0');
+    const needRefresh = Date.now() - lastUpdate > 60 * 60 * 1000;
+    
+    if (needRefresh || searchIndex.lighthouses.length === 0) {
+      buildSearchIndex();
+    } else {
+      setLighthouses(searchIndex.lighthouses);
+      setLoading(false);
+    }
   }, []);
 
   const handleSelectLighthouse = async (lighthouse) => {
     setSelectedLighthouse(lighthouse);
     setCheckIns([]);
-    const nickname = await fetchUserNickname(lighthouse.author);
+    const nickname = searchIndex.users[lighthouse.author]?.nickname || '';
     setUserNickname(nickname);
     fetchUserCheckIns(lighthouse.author);
+  };
+
+  const handleSelectUser = async (user) => {
+    // 创建一个虚拟灯塔对象用于展示用户详情
+    setSelectedLighthouse({
+      author: user.address,
+      authorShort: user.addressShort,
+      title: `${user.nickname} 的习惯空间`,
+      icon: user.icon,
+      color: user.color,
+      timestamp: user.joinTime,
+      isUserProfile: true
+    });
+    setCheckIns([]);
+    setUserNickname(user.nickname);
+    fetchUserCheckIns(user.address);
   };
 
   // Avalanche Fuji 浏览器地址
@@ -155,6 +311,18 @@ const ExplorePage = ({ onBack }) => {
   const clearSearch = () => {
     setSearchQuery('');
   };
+
+  // 刷新索引
+  const refreshIndex = () => {
+    localStorage.removeItem(SEARCH_INDEX_KEY);
+    localStorage.removeItem(SEARCH_INDEX_TIMESTAMP_KEY);
+    buildSearchIndex();
+  };
+
+  // 统计搜索结果
+  const totalResults = filteredResults.lighthouses.length + 
+                       filteredResults.checkIns.length + 
+                       filteredResults.users.length;
 
   return (
     <div className="explore-page">
@@ -200,7 +368,7 @@ const ExplorePage = ({ onBack }) => {
             </div>
 
             <div className="checkins-section">
-              <h3><Zap size={16} /> 打卡记录 ({checkIns.length})</h3>
+              <h3><Zap size={16} /> 航海日志 ({checkIns.length})</h3>
               {loadingCheckIns ? (
                 <div className="loading-state">加载中...</div>
               ) : checkIns.length > 0 ? (
@@ -210,13 +378,16 @@ const ExplorePage = ({ onBack }) => {
                       <div className="checkin-icon">✨</div>
                       <div className="checkin-info">
                         <div className="checkin-time">{checkIn.timestamp}</div>
+                        {checkIn.thought && (
+                          <div className="checkin-thought">{checkIn.thought}</div>
+                        )}
                         <div className="checkin-cid">习惯ID: {checkIn.cid}</div>
                       </div>
                     </div>
                   ))}
                 </div>
               ) : (
-                <div className="empty-checkins">暂无打卡记录</div>
+                <div className="empty-checkins">暂无相关航海日志</div>
               )}
             </div>
           </div>
@@ -228,14 +399,14 @@ const ExplorePage = ({ onBack }) => {
                 <Globe size={32} />
                 <h1>探索公开岛屿</h1>
               </div>
-              <p className="header-desc">发现其他航行者公开的习惯灯塔</p>
+              <p className="header-desc">发现其Ta航行者公开的灯塔</p>
               
               {/* 搜索框 */}
               <div className="search-container">
                 <Search size={18} className="search-icon" />
                 <input
                   type="text"
-                  placeholder="搜索习惯名称或用户地址..."
+                  placeholder="搜索航行者名称、航海日志或岛屿名称..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="search-input"
@@ -248,9 +419,9 @@ const ExplorePage = ({ onBack }) => {
               </div>
 
               <div className="header-actions">
-                <button className="refresh-btn" onClick={fetchAllLighthouses} disabled={loading}>
+                <button className="refresh-btn" onClick={refreshIndex} disabled={loading}>
                   <RefreshCw size={16} className={loading ? 'spinning' : ''} />
-                  刷新
+                  {loading ? '索引中...' : '刷新数据'}
                 </button>
               </div>
             </div>
@@ -258,49 +429,131 @@ const ExplorePage = ({ onBack }) => {
             {loading ? (
               <div className="loading-state">
                 <div className="loading-spinner"></div>
-                <p>正在穿越星门，获取公开岛屿数据...</p>
+                <p>{indexingProgress || '正在穿越星门，获取公开岛屿数据...'}</p>
               </div>
             ) : error ? (
               <div className="error-state">
                 <p>{error}</p>
               </div>
-            ) : filteredLighthouses.length === 0 ? (
-              <div className="empty-state">
-                <div className="empty-icon">{searchQuery ? '🔍' : '🌌'}</div>
-                <h3>{searchQuery ? '未找到匹配的岛屿' : '宇宙中暂无公开岛屿'}</h3>
-                <p>{searchQuery ? '试试其他关键词' : '成为第一个公开习惯的航行者吧！'}</p>
-              </div>
             ) : (
               <>
+                {/* 搜索结果统计 */}
                 {searchQuery && (
                   <div className="search-result-info">
-                    找到 <span className="highlight">{filteredLighthouses.length}</span> 个匹配的岛屿
+                    找到 <span className="highlight">{totalResults}</span> 个匹配结果
+                    {filteredResults.lighthouses.length > 0 && (
+                      <span className="result-breakdown"> · 岛屿 {filteredResults.lighthouses.length}</span>
+                    )}
+                    {filteredResults.checkIns.length > 0 && (
+                      <span className="result-breakdown"> · 打卡 {filteredResults.checkIns.length}</span>
+                    )}
+                    {filteredResults.users.length > 0 && (
+                      <span className="result-breakdown"> · 用户 {filteredResults.users.length}</span>
+                    )}
                   </div>
                 )}
-                <div className="lighthouses-grid">
-                  {filteredLighthouses.map((lighthouse) => (
-                    <div 
-                      key={lighthouse.id} 
-                      className="lighthouse-card"
-                      onClick={() => handleSelectLighthouse(lighthouse)}
-                    >
-                      <div className="card-header">
-                        <span className="card-icon" style={{ background: `linear-gradient(135deg, ${lighthouse.color}, #fff)` }}>
-                          {lighthouse.icon}
-                        </span>
-                        <div className="card-title">{lighthouse.title}</div>
-                      </div>
-                      <div className="card-author">
-                        <User size={12} />
-                        <span>{lighthouse.authorShort}</span>
-                      </div>
-                      <div className="card-time">{lighthouse.timestamp}</div>
-                      <div className="card-badge">
-                        <Globe size={10} /> 公开
-                      </div>
+
+                {/* 用户搜索结果 */}
+                {filteredResults.users.length > 0 && (
+                  <div className="result-section">
+                    <h3 className="section-title"><User size={16} /> 航行者</h3>
+                    <div className="users-grid">
+                      {filteredResults.users.slice(0, 6).map((user) => (
+                        <div 
+                          key={user.address} 
+                          className="user-card"
+                          onClick={() => handleSelectUser(user)}
+                        >
+                          <div className="user-avatar" style={{ background: `linear-gradient(135deg, ${user.color}, #fff)` }}>
+                            {user.icon}
+                          </div>
+                          <div className="user-info">
+                            <div className="user-nickname">{user.nickname}</div>
+                            <div className="user-stats">
+                              <span>{user.lighthouseCount} 座岛屿</span>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
+                  </div>
+                )}
+
+                {/* 打卡内容搜索结果 */}
+                {filteredResults.checkIns.length > 0 && (
+                  <div className="result-section">
+                    <h3 className="section-title"><MessageSquare size={16} /> 航海日志</h3>
+                    <div className="checkins-search-list">
+                      {filteredResults.checkIns.slice(0, 10).map((checkIn) => (
+                        <div 
+                          key={checkIn.id} 
+                          className="checkin-search-item"
+                          style={{ borderLeftColor: checkIn.userColor }}
+                          onClick={() => handleSelectUser(searchIndex.users[checkIn.userAddress])}
+                        >
+                          <div className="checkin-user-avatar" style={{ background: `linear-gradient(135deg, ${checkIn.userColor}, #fff)` }}>
+                            {checkIn.userIcon}
+                          </div>
+                          <div className="checkin-search-content">
+                            <div className="checkin-user-name">{checkIn.nickname}</div>
+                            <div className="checkin-thought-text">{checkIn.thought}</div>
+                            <div className="checkin-meta">
+                              <Clock size={12} /> {checkIn.timestamp}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* 灯塔搜索结果 */}
+                {filteredResults.lighthouses.length > 0 && (
+                  <div className="result-section">
+                    <h3 className="section-title"><Globe size={16} /> 公开岛屿</h3>
+                    <div className="lighthouses-grid">
+                      {filteredResults.lighthouses.map((lighthouse) => (
+                        <div 
+                          key={lighthouse.id} 
+                          className="lighthouse-card"
+                          onClick={() => handleSelectLighthouse(lighthouse)}
+                        >
+                          <div className="card-header">
+                            <span className="card-icon" style={{ background: `linear-gradient(135deg, ${lighthouse.color}, #fff)` }}>
+                              {lighthouse.icon}
+                            </span>
+                            <div className="card-title">{lighthouse.title}</div>
+                          </div>
+                          <div className="card-author">
+                            <User size={12} />
+                            <span>{searchIndex.users[lighthouse.author]?.nickname || lighthouse.authorShort}</span>
+                          </div>
+                          <div className="card-time">{lighthouse.timestamp}</div>
+                          <div className="card-badge">
+                            <Globe size={10} /> 公开
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* 无结果 */}
+                {!searchQuery && lighthouses.length === 0 && (
+                  <div className="empty-state">
+                    <div className="empty-icon">🌌</div>
+                    <h3>宇宙中暂无公开岛屿</h3>
+                    <p>成为第一个公开习惯的航行者吧！</p>
+                  </div>
+                )}
+
+                {searchQuery && totalResults === 0 && (
+                  <div className="empty-state">
+                    <div className="empty-icon">🔍</div>
+                    <h3>未找到匹配的结果</h3>
+                    <p>试试其他关键词</p>
+                  </div>
+                )}
               </>
             )}
           </>
@@ -507,6 +760,143 @@ const ExplorePage = ({ onBack }) => {
           font-weight: 700;
         }
 
+        .result-breakdown {
+          color: rgba(255, 255, 255, 0.4);
+        }
+
+        /* 结果分区 */
+        .result-section {
+          margin-bottom: 40px;
+        }
+
+        .section-title {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          font-size: 1rem;
+          color: #a5b4fc;
+          margin: 0 0 20px 0;
+          padding-bottom: 12px;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        /* 用户卡片 */
+        .users-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+          gap: 16px;
+        }
+
+        .user-card {
+          display: flex;
+          align-items: center;
+          gap: 14px;
+          padding: 16px;
+          background: rgba(255, 255, 255, 0.03);
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          border-radius: 16px;
+          cursor: pointer;
+          transition: all 0.3s ease;
+        }
+
+        .user-card:hover {
+          background: rgba(255, 255, 255, 0.06);
+          border-color: rgba(99, 102, 241, 0.5);
+          transform: translateY(-2px);
+        }
+
+        .user-avatar {
+          width: 48px;
+          height: 48px;
+          border-radius: 50%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 22px;
+          flex-shrink: 0;
+        }
+
+        .user-info {
+          flex: 1;
+          min-width: 0;
+        }
+
+        .user-nickname {
+          font-weight: 700;
+          font-size: 15px;
+          margin-bottom: 4px;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+
+        .user-stats {
+          font-size: 12px;
+          color: rgba(255, 255, 255, 0.5);
+        }
+
+        /* 打卡记录搜索结果 */
+        .checkins-search-list {
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+
+        .checkin-search-item {
+          display: flex;
+          align-items: flex-start;
+          gap: 14px;
+          padding: 16px;
+          background: rgba(255, 255, 255, 0.03);
+          border-radius: 12px;
+          border-left: 3px solid #6366f1;
+          cursor: pointer;
+          transition: all 0.3s ease;
+        }
+
+        .checkin-search-item:hover {
+          background: rgba(255, 255, 255, 0.06);
+        }
+
+        .checkin-user-avatar {
+          width: 40px;
+          height: 40px;
+          border-radius: 50%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 18px;
+          flex-shrink: 0;
+        }
+
+        .checkin-search-content {
+          flex: 1;
+          min-width: 0;
+        }
+
+        .checkin-user-name {
+          font-weight: 600;
+          font-size: 14px;
+          margin-bottom: 6px;
+          color: #a5b4fc;
+        }
+
+        .checkin-thought-text {
+          font-size: 14px;
+          line-height: 1.5;
+          color: rgba(255, 255, 255, 0.8);
+          margin-bottom: 8px;
+          word-break: break-word;
+        }
+
+        .checkin-meta {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          font-size: 11px;
+          color: rgba(255, 255, 255, 0.4);
+        }
+
         .loading-state {
           text-align: center;
           padding: 60px 20px;
@@ -621,7 +1011,6 @@ const ExplorePage = ({ onBack }) => {
           gap: 6px;
           color: rgba(255, 255, 255, 0.5);
           font-size: 12px;
-          font-family: monospace;
           margin-bottom: 8px;
         }
 
@@ -744,7 +1133,7 @@ const ExplorePage = ({ onBack }) => {
 
         .checkin-item {
           display: flex;
-          align-items: center;
+          align-items: flex-start;
           gap: 16px;
           padding: 16px;
           background: rgba(255, 255, 255, 0.03);
@@ -763,7 +1152,15 @@ const ExplorePage = ({ onBack }) => {
         .checkin-time {
           color: white;
           font-size: 14px;
-          margin-bottom: 4px;
+          margin-bottom: 6px;
+        }
+
+        .checkin-thought {
+          color: rgba(255, 255, 255, 0.7);
+          font-size: 13px;
+          line-height: 1.5;
+          margin-bottom: 6px;
+          word-break: break-word;
         }
 
         .checkin-cid {
@@ -784,6 +1181,10 @@ const ExplorePage = ({ onBack }) => {
           }
 
           .lighthouses-grid {
+            grid-template-columns: 1fr;
+          }
+
+          .users-grid {
             grid-template-columns: 1fr;
           }
 
