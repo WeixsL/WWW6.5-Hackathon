@@ -52,7 +52,7 @@ Identity is not a static state. You can continuously inject new cards into exist
 
 ## 🎨 UI Preview
 
-| **1. Collect Ores** | **2. Smelt & Refine** | **3. Awaken Identity** |
+| **1. Collect Ores** | **2. Refine Cards** | **3. Awaken Badge** |
 | --- | --- | --- |
 |  |  |  |
 
