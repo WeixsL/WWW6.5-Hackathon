@@ -128,3 +128,134 @@
 
 > **一个让人重新表达、倾听与探索的协议。**
 >
+
+## Project Name: On-Chain Message in a Bottle
+
+---
+
+## 🧠 Project Background (Problem)
+
+In today's internet environment, most applications rely on recommendation algorithms to improve user retention:
+
+- "You Might Like"
+- "People Nearby"
+- Personalized information feed
+
+While these mechanisms improve efficiency, they also bring obvious problems:
+
+- Information Cocoon
+- User passively receives content
+- Severe content homogenization
+Privacy is continuously modeled and tracked.
+
+At the same time, there is a wealth of valuable textual content (comments, stories, expressions):
+
+- May disappear due to platform shutdown or review mechanism.
+- Difficult to preserve for a long time and to be rediscovered
+
+We are already aware of being trapped in an information cocoon, yet it's difficult to escape. This is a form of invisible algorithmic binding and a chronic invasion of privacy. Women are consistently recommended content tailored to women, while men are only recommended content tailored to men, leading to a more severe divide. Furthermore, the more fragmented the information, the easier it is to become addicted, making it hard to put down our phones.
+
+---
+
+## 💡 Our Solution
+
+We propose:
+
+**An on-chain anonymous message-in-a-bottle protocol based on a random distribution mechanism**
+>
+
+Users are no longer recommended content by algorithms, but instead:
+
+- Receive a random "message in a bottle" from around the world every day.
+- You are free to choose whether to reply.
+- Express your appreciation for the content by giving a tip.
+
+---
+
+## ✨ Core Features
+
+### 🎲 1. Random Discovery
+
+- Each user can open 1 message in a bottle per day.
+- Content is completely randomized and not based on recommendation algorithms.
+
+👉 Break out of the information cocoon
+
+---
+
+### 💬 2. Anonymous Expression
+
+- All users participate via wallet
+- Do not display personally identifiable information
+
+👉 Enhance authentic expression
+
+---
+
+### 💰 3. Tipping Mechanism
+
+- The quality of the reply is judged by the sender.
+High-quality content can earn on-chain rewards.
+
+👉 Upgrade from "Liking" to "Value Capture"
+
+---
+
+### 🧾 4. Content Verifiable and Persistent (On-chain Proof)
+
+- Off-chain content storage (IPFS)
+- Content hashing on the blockchain
+
+👉 Tamper-proof + Long-term availability
+
+---
+
+### 🏅 5. Reputation and NFTs
+
+- Received multiple donations → Earned NFT badge
+- Repeatedly reported → Banned from speaking
+
+👉 Self-organized community governance
+
+---
+
+## ⛓️ Web3 Features (Why Blockchain)
+
+### 1️⃣ Trustless Tipping
+
+Value transfer can be completed directly through smart contracts.
+
+---
+
+### 2️⃣ Verifiable Randomness
+
+Task distribution does not depend on platform algorithms
+
+---
+
+### 3️⃣ Data Persistence
+
+Content will not be lost if the platform disappears.
+
+---
+
+### 4️⃣ Wallet Identity
+
+No account system required, naturally anonymous + traceable behavior
+
+---
+
+## 🌍 Project Vision
+
+In an information world dominated by algorithms
+>
+>
+We use randomness to reconnect people.
+>
+I don't engage in fragmented reading, nor do I expect traffic or likes. I simply calm down and write a letter, answer a question, or share a moment.
+>
+
+The on-chain message in a bottle is not a social platform, but rather:
+
+A protocol that allows people to express themselves, listen, and explore anew.
+>
