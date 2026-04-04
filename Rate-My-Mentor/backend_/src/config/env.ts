@@ -111,9 +111,7 @@ export function requireEnv(key: keyof typeof env): string {
 const aiEnvSchema = z.object({
   MINIMAX_API_KEY: z.string().min(1, 'MINIMAX_API_KEY 必填（MiniMax 开放平台 / Coding Plan）'),
   MINIMAX_MODEL: z.string().default('MiniMax-M2.7'),
-  /** OpenAI 兼容 Chat Completions，国际站默认；国内可改为 https://api.minimaxi.com/v1 */
-  MINIMAX_BASE_URL: z.string().url().default('https://api.minimax.io/v1'),
-  /** 原生 chatcompletion_v2 的域名（无末尾 /v1） */
+  /** chatcompletion_v2 的 API 根域名（无路径）；国内可改为 https://api.minimaxi.com */
   MINIMAX_NATIVE_BASE_URL: z.string().url().default('https://api.minimax.io'),
   /** Offer 图片识别用；若 M2.7 多模态异常可改为 MiniMax-Text-01 */
   MINIMAX_VISION_MODEL: z.string().default('MiniMax-M2.7'),
@@ -216,4 +214,3 @@ export function getEncryptionEnv() {
 //服务可以先启动，具体功能在调用时再按需校验环境变量，避免因为某个暂时不用的模块缺配置导致整个后端起不来。
 //同时我建议吸收“福安版本”里 zod 的格式校验能力，把 env 按 IPFS、邮件、链上、加密、AI 等模块分组，在 requireEnv 之后继续做 schema 校验。
 //这样能兼顾联调灵活性和配置严谨性。等后面接近部署时，再考虑切到更接近“福安版本”的全量启动校验。
-
