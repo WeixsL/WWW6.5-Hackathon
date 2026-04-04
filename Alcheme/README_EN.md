@@ -1,8 +1,6 @@
-# README_EN
+# ⚗️ Alcheme: The Alchemy of Me
 
 ---
-
-# ⚗️ Alcheme: The Alchemy of Me
 
 > **Refine fragments, awaken true self.**
 > 
