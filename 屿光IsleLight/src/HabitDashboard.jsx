@@ -628,7 +628,7 @@ const HabitDashboard = ({ onNavigateToExplore }) => {
               <Search size={18} className="search-icon-dashboard" />
               <input
                 type="text"
-                placeholder="搜索你的岛屿或打卡备注..."
+                placeholder="搜索你的岛屿或航海日志..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="search-input-dashboard"
